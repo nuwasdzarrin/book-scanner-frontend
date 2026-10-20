@@ -67,16 +67,18 @@
 
     /* Kamera */
     .viewfinder {
+      --warna-bingkai: #FFFFFF;
       position: relative;
       background: #000;
       border-radius: 20px;
       overflow: hidden;
-      aspect-ratio: 4 / 3;
-      display: grid;
-      place-items: center;
+      aspect-ratio: 1 / 1;
+      max-height: 62vh;
+      width: 100%;
     }
-    #reader { width: 100%; height: 100%; }
-    #reader video { width: 100% !important; height: 100% !important; object-fit: cover; }
+    #reader { position: absolute; inset: 0; }
+    #reader video { width: 100% !important; height: 100% !important; object-fit: cover; display: block; }
+    #reader canvas, #reader img { display: none !important; }
     .idle {
       position: absolute; inset: 0;
       display: grid; place-items: center; text-align: center;
@@ -84,6 +86,65 @@
     }
     .idle svg { display: block; margin: 0 auto 10px; opacity: .85; }
     .viewfinder.aktif .idle { display: none; }
+
+    /* Bingkai bidik: masker gelap di luar kotak, sudut tebal, garis laser */
+    .bingkai {
+      display: none;
+      position: absolute;
+      left: 8%; right: 8%; top: 30%; height: 34%;
+      border-radius: 14px;
+      box-shadow: 0 0 0 100vmax rgba(0, 0, 0, .55);
+      transition: box-shadow .2s;
+    }
+    .viewfinder.aktif .bingkai { display: block; }
+    .sudut { position: absolute; width: 30px; height: 30px; border: 0 solid var(--warna-bingkai); transition: border-color .15s; }
+    .sudut.tl { top: -3px; left: -3px; border-top-width: 5px; border-left-width: 5px; border-top-left-radius: 14px; }
+    .sudut.tr { top: -3px; right: -3px; border-top-width: 5px; border-right-width: 5px; border-top-right-radius: 14px; }
+    .sudut.bl { bottom: -3px; left: -3px; border-bottom-width: 5px; border-left-width: 5px; border-bottom-left-radius: 14px; }
+    .sudut.br { bottom: -3px; right: -3px; border-bottom-width: 5px; border-right-width: 5px; border-bottom-right-radius: 14px; }
+    .laser {
+      position: absolute; left: 6%; right: 6%; top: 50%;
+      height: 2px; border-radius: 2px;
+      background: #FF4D3D;
+      box-shadow: 0 0 10px 2px rgba(255, 77, 61, .7);
+      animation: laser 1.8s ease-in-out infinite alternate;
+    }
+    @keyframes laser { from { top: 12%; } to { top: 88%; } }
+    @media (prefers-reduced-motion: reduce) { .laser { animation: none; } }
+    .petunjuk {
+      position: absolute; left: 0; right: 0; top: calc(100% + 14px);
+      text-align: center; color: #fff; font-size: 14px; font-weight: 600;
+      text-shadow: 0 1px 3px rgba(0, 0, 0, .8);
+    }
+    .petunjuk-atas { top: auto; bottom: calc(100% + 14px); font-weight: 400; opacity: .85; }
+
+    /* Status di dalam viewfinder */
+    .viewfinder[data-state="proses"] .laser,
+    .viewfinder[data-state="ok"] .laser,
+    .viewfinder[data-state="gagal"] .laser { display: none; }
+    .viewfinder[data-state="proses"] { --warna-bingkai: var(--stamp); }
+    .viewfinder[data-state="ok"] { --warna-bingkai: #3DDC84; }
+    .viewfinder[data-state="gagal"] { --warna-bingkai: #FF5A4D; }
+    .viewfinder[data-state="proses"] .bingkai,
+    .viewfinder[data-state="ok"] .bingkai,
+    .viewfinder[data-state="gagal"] .bingkai { box-shadow: 0 0 0 100vmax rgba(0, 0, 0, .72); }
+    .lencana {
+      display: none;
+      position: absolute; inset: 0;
+      place-items: center;
+      color: #fff; font-weight: 800; font-size: 18px; text-align: center;
+      text-shadow: 0 1px 4px rgba(0, 0, 0, .9);
+    }
+    .viewfinder[data-state="proses"] .lencana,
+    .viewfinder[data-state="ok"] .lencana,
+    .viewfinder[data-state="gagal"] .lencana { display: grid; }
+    .putar {
+      width: 22px; height: 22px; margin: 0 auto 6px;
+      border: 3px solid rgba(255, 255, 255, .35); border-top-color: #fff;
+      border-radius: 50%; animation: putar .8s linear infinite;
+    }
+    .viewfinder:not([data-state="proses"]) .putar { display: none; }
+    @keyframes putar { to { transform: rotate(360deg); } }
 
     /* Tombol */
     .aksi { display: flex; gap: 10px; margin-top: 14px; }
@@ -174,6 +235,14 @@
           Kamera belum menyala
         </div>
       </div>
+      <div class="bingkai" aria-hidden="true">
+        <span class="sudut tl"></span><span class="sudut tr"></span>
+        <span class="sudut bl"></span><span class="sudut br"></span>
+        <span class="laser"></span>
+        <div class="lencana"><div><div class="putar"></div><span id="lencana-teks"></span></div></div>
+        <div class="petunjuk petunjuk-atas">Jarak ±15 cm, cahaya cukup</div>
+        <div class="petunjuk">Masukkan barcode ke dalam kotak</div>
+      </div>
     </div>
 
     <div class="aksi">
@@ -221,16 +290,21 @@
       el.className = jenis || "";
     }
 
+    // Keadaan bingkai: "" (siap scan), "proses", "ok", "gagal"
+    function bingkai(state, teks) {
+      const vf = $("viewfinder");
+      if (state) vf.dataset.state = state; else delete vf.dataset.state;
+      $("lencana-teks").textContent = teks || "";
+    }
+
     async function mulai() {
       try {
         status("Menyalakan kamera…", "proses");
         await scanner.start(
           { facingMode: "environment" },
-          {
-            fps: 10,
-            qrbox: (w, h) => ({ width: Math.floor(Math.min(w * 0.85, 340)), height: Math.floor(Math.min(h * 0.45, 150)) }),
-            aspectRatio: 4 / 3
-          },
+          // Tanpa qrbox: seluruh frame dipindai, bingkai di layar hanya panduan.
+          // Masker bawaan library tidak pas dengan video yang di-crop (object-fit: cover).
+          { fps: 10, aspectRatio: 1 },
           onScan,
           () => {} // abaikan frame yang belum terbaca
         );
@@ -255,6 +329,7 @@
       if (!sedangScan) return;
       try { await scanner.stop(); } catch (e) {}
       sedangScan = false;
+      bingkai("");
       $("viewfinder").classList.remove("aktif");
       btnScan.textContent = "Mulai scan";
       btnScan.classList.remove("stop");
@@ -263,25 +338,22 @@
 
     btnScan.addEventListener("click", () => (sedangScan ? berhenti() : mulai()));
 
+    // Kamera tetap jalan selama memproses (tanpa scanner.pause, yang memunculkan
+    // tulisan "Scanner paused"); hasil scan diabaikan sampai jeda selesai.
     async function onScan(teks) {
       const sekarang = Date.now();
       // Abaikan barcode yang sama dalam 5 detik, dan scan baru saat masih memproses
       if (sedangProses || (teks === terakhir.isbn && sekarang - terakhir.waktu < 5000)) return;
       terakhir = { isbn: teks, waktu: sekarang };
-      try { scanner.pause(true); } catch (e) {}
       await kirim(teks);
-      setTimeout(() => {
-        if (sedangScan) {
-          try { scanner.resume(); } catch (e) {}
-          status("Siap scan buku berikutnya.");
-        }
-      }, 1500);
     }
 
     async function kirim(isbn) {
       sedangProses = true;
+      let berhasil = false;
       if (navigator.vibrate) navigator.vibrate(60);
       status("Mencari data ISBN " + isbn + "…", "proses");
+      bingkai("proses", "Mencari data…");
       try {
         const res = await fetch("/api/simpan", {
           method: "POST",
@@ -297,11 +369,18 @@
           return;
         }
         tampilkan(data.buku);
+        berhasil = true;
         status(data.buku.ditemukan ? "Tersimpan ke spreadsheet." : "ISBN tersimpan, tapi datanya tidak ada di Google Books. Lengkapi manual di spreadsheet.");
       } catch (err) {
         status("Gagal mengirim: " + err.message, "error");
       } finally {
-        sedangProses = false;
+        bingkai(berhasil ? "ok" : "gagal", berhasil ? "✓ Tersimpan" : "✕ Gagal");
+        // Jeda singkat supaya hasil terlihat dan buku sempat diganti
+        setTimeout(() => {
+          sedangProses = false;
+          bingkai("");
+          if (sedangScan && berhasil) status("Siap scan buku berikutnya.");
+        }, berhasil ? 1500 : 2500);
       }
     }
 
@@ -339,7 +418,7 @@
     // Cadangan: scan dari foto (kalau kamera live bermasalah)
     $("foto").addEventListener("change", async (e) => {
       const file = e.target.files[0];
-      if (!file) return;
+      if (!file || sedangProses) { e.target.value = ""; return; }
       status("Membaca barcode dari foto…", "proses");
       try {
         const isbn = await fileScanner.scanFile(file, false);
